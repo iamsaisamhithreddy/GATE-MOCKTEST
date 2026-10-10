@@ -91,6 +91,9 @@ const initializeTest = (restore = null) => {
         currentQuestionIndex = restore.currentQuestionIndex || 0;
         testState = restore.testState || questions.map(() => ({ answer: null, status: 'not_visited', attempted: false }));
         timerSeconds = (typeof restore.timerSeconds === 'number') ? restore.timerSeconds : window.EXAM_CONFIG.durationSeconds;
+        timeSpentPerQuestion = Array.isArray(restore.timeSpentPerQuestion) && restore.timeSpentPerQuestion.length === questions.length
+            ? restore.timeSpentPerQuestion : questions.map(() => 0);
+        questionStartTime = Date.now();
     } else {
         testState = questions.map(() => ({ answer: null, status: 'not_visited', attempted: false }));
         timeSpentPerQuestion = questions.map(() => 0);
@@ -327,6 +330,7 @@ const saveCurrentAnswersToState = () => {
 
 const handleSaveAndNext = () => {
     saveCurrentAnswersToState(); 
+    trackAnswerChange(currentQuestionIndex);
     updateStatus(testState[currentQuestionIndex].answer, 'answered');
     if (currentQuestionIndex < totalQuestions - 1) navigateToQuestion(currentQuestionIndex + 1);
     else renderPalette();
@@ -334,6 +338,7 @@ const handleSaveAndNext = () => {
 
 const handleMarkForReview = () => {
     saveCurrentAnswersToState(); 
+    trackAnswerChange(currentQuestionIndex);
     if (testState[currentQuestionIndex].answer !== null) updateStatus(testState[currentQuestionIndex].answer, 'marked_for_review');
     else testState[currentQuestionIndex].status = 'marked_for_review';
     if (currentQuestionIndex < totalQuestions - 1) navigateToQuestion(currentQuestionIndex + 1);
@@ -350,6 +355,7 @@ const handleClearResponse = () => {
     
     if (testState[currentQuestionIndex].status.includes('marked_for_review')) testState[currentQuestionIndex].status = 'marked_for_review';
     else testState[currentQuestionIndex].status = 'not_answered';
+    trackAnswerChange(currentQuestionIndex);
     
     renderQuestion();
     renderPalette();
@@ -364,8 +370,44 @@ window.onCodingSubmitted = (index) => {
     performAutosave();
 };
 
+// True when an MCQ / MSQ / NAT answer is correct (same rule as the final scoring)
+const isAnswerCorrect = (q, answer) => {
+    if (answer === null || answer === undefined) return false;
+    const userAnswers = Array.isArray(answer) ? answer.map(String) : [String(answer)];
+    if (q.type === 'NAT') {
+        const userNum = parseFloat(userAnswers[0]);
+        return !isNaN(userNum) && userNum >= q.range[0] && userNum <= q.range[1];
+    }
+    return q.correctAnswer.length === userAnswers.length && q.correctAnswer.every(val => userAnswers.includes(String(val)));
+};
+
+// Response change pattern for the report: every time a saved answer changes, remember whether it is
+// now Correct, Incorrect or Unanswered. Transitions after the first answer are counted on submit.
+const trackAnswerChange = (index) => {
+    const q = questions[index];
+    const st = testState[index];
+    if (!q || q.type === 'CODE') return;
+    const ans = st.answer;
+    const key = ans === null || ans === undefined ? '' : JSON.stringify(Array.isArray(ans) ? ans.map(String).sort() : [String(ans)]);
+    const hist = st.hist || (st.hist = []);
+    const last = hist[hist.length - 1];
+    if (last ? last.k === key : key === '') return;
+    hist.push({ k: key, c: key === '' ? 'U' : (isAnswerCorrect(q, ans) ? 'C' : 'I') });
+};
+
+const countAnswerChanges = (st) => {
+    const counts = {};
+    const hist = st.hist || [];
+    for (let i = 1; i < hist.length; i++) {
+        const t = hist[i - 1].c + hist[i].c;
+        if (t !== 'CC' && t !== 'UU') counts[t] = (counts[t] || 0) + 1;
+    }
+    return counts;
+};
+
 const showSubmitModal = () => {
     saveCurrentAnswersToState();
+    trackAnswerChange(currentQuestionIndex);
 
     let counts = { answered: 0, not_answered: 0, not_visited: 0, marked_for_review: 0, answered_marked: 0 };
 
@@ -432,59 +474,108 @@ const handleTestSubmit = () => {
     if (!testStartTime) { testStartTime = Date.now(); testStartTimeString = getMysqlTimestamp(); }
     const totalTimeSpentSec = Math.floor((testEndTime - testStartTime) / 1000);
 
+    // Extra per-question data for the report: order, time spent, final status, response changes
+    detailedDetails.forEach((d, index) => {
+        d.q_order = index + 1;
+        d.time_spent = timeSpentPerQuestion[index] || 0;
+        d.q_status = testState[index].status;
+        d.changes = countAnswerChanges(testState[index]);
+    });
+
+    submitPayload = {
+        action: 'submit', subject_id: window.EXAM_CONFIG.subjectId, set_no: window.EXAM_CONFIG.setNo,
+        score: score.toFixed(2), total_marks: totalMarks.toFixed(2), attempted: attemptedCount,
+        correct: questions.filter((q, i) => testState[i].isCorrect === 'correct').length,
+        wrong: questions.filter((q, i) => testState[i].isCorrect === 'wrong').length,
+        start_time: testStartTimeString, test_duration_minutes: window.EXAM_CONFIG.durationMinutes,
+        time_taken_seconds: totalTimeSpentSec, details: detailedDetails
+    };
+    SubmitFlow.hideConfirm();
+    sendSubmission();
+};
+
+// ==========================================
+// SUBMIT FLOW (TCS iON NQT style)
+// Submit -> summary -> "about to be submitted" OK / Cancel -> saved -> Info popup ->
+// "Exit Assessment" page -> the assessment page with My Attempts and the report.
+// ==========================================
+let submitPayload = null;
+
+const sendSubmission = () => {
+    SubmitFlow.showSaving();
     fetch('save_progress.php', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            action: 'submit', subject_id: window.EXAM_CONFIG.subjectId, set_no: window.EXAM_CONFIG.setNo,
-            score: score.toFixed(2), total_marks: totalMarks.toFixed(2), attempted: attemptedCount,
-            correct: questions.filter((q, i) => testState[i].isCorrect === 'correct').length,
-            wrong: questions.filter((q, i) => testState[i].isCorrect === 'wrong').length,
-            start_time: testStartTimeString, test_duration_minutes: window.EXAM_CONFIG.durationMinutes,
-            time_taken_seconds: totalTimeSpentSec, details: detailedDetails
-        })
-    }).catch(err => console.error("Sync Failed", err));
-
-    document.getElementById('main-app').classList.add('hidden');
-    document.getElementById('result-screen').classList.remove('hidden');
-    document.getElementById('result-score').textContent = score.toFixed(2);
-    document.getElementById('result-total').textContent = totalMarks.toFixed(2);
-    document.getElementById('result-attempted').textContent = attemptedCount;
-    document.getElementById('result-unattempted').textContent = totalQuestions - attemptedCount;
-
-    const rc = document.getElementById('review-container');
-    rc.innerHTML = '';
-    questions.forEach((q, idx) => {
-        const st = testState[idx];
-        const qTime = timeSpentPerQuestion[idx] || 0;
-        let given = st.answer ? (Array.isArray(st.answer) ? st.answer.join(', ') : String(st.answer)) : '—';
-        let correct = q.correctAnswer ? (Array.isArray(q.correctAnswer) ? q.correctAnswer.join(', ') : String(q.correctAnswer)) : '—';
-        if (q.type === 'NAT') correct = `${q.range[0]} to ${q.range[1]}`;
-        if (q.type === 'CODE') {
-            given = st.answer ? `${st.answer.passed}/${st.answer.total} test cases passed${st.answer.compileError ? ' (compilation error)' : ''}, ${(st.codeMarks || 0).toFixed(2)} of ${q.marks} marks` : 'Not submitted';
-            correct = `All ${q.coding.tests.length} test cases`;
-        }
-        
-        let statusText = (st.isCorrect === 'correct') ? 'Correct' : (st.isCorrect === 'wrong') ? 'Wrong' : 'Unattempted';
-        if (q.type === 'CODE' && st.isCorrect === 'wrong' && st.codeMarks > 0) statusText = 'Partly correct';
-        let statusColor = (st.isCorrect === 'correct') ? 'text-green-600' : (st.isCorrect === 'wrong') ? 'text-red-600' : 'text-gray-500';
-
-        const block = document.createElement('div');
-        block.className = 'p-3 bg-white rounded shadow-sm border border-gray-200';
-        block.innerHTML = `
-            <div class="flex justify-between items-center pb-2 border-b">
-                <strong class="text-lg">Question ${idx + 1}</strong><span class="font-bold ${statusColor}">${statusText}</span>
-            </div>
-            <div class="mt-1 text-sm font-medium text-purple-700">⏱ Time Spent: ${Math.floor(qTime/60)}m ${qTime%60}s</div>
-            <div class="mt-2 text-sm"><strong>Your Answer:</strong> ${given}</div>
-            <div class="mt-1 text-sm"><strong>Correct Answer:</strong> <span class="text-blue-700 font-medium">${correct}</span></div>
-        `;
-        rc.appendChild(block);
+        body: JSON.stringify(submitPayload)
+    })
+    .then(r => r.json())
+    .then(res => {
+        if (!res || !res.success) throw new Error((res && (res.message || res.error)) || 'Not saved');
+        localStorage.removeItem(AUTOSAVE_KEY);
+        SubmitFlow.showInfo();
+    })
+    .catch(err => {
+        console.error('Submit failed', err);
+        SubmitFlow.showError();
     });
-    localStorage.removeItem(AUTOSAVE_KEY);
+};
+
+const SubmitFlow = {
+    el: (id) => document.getElementById(id),
+    show(id) { const e = this.el(id); if (e) e.classList.remove('hidden'); },
+    hide(id) { const e = this.el(id); if (e) e.classList.add('hidden'); },
+    showConfirm() { this.show('nqt-confirm'); },
+    hideConfirm() { this.hide('nqt-confirm'); },
+    showSaving() {
+        const main = this.el('main-app');
+        if (main) main.classList.add('hidden');
+        this.show('nqt-blank');
+        this.hide('nqt-info');
+        this.show('nqt-saving');
+    },
+    showInfo() {
+        this.hide('nqt-saving');
+        this.el('nqt-info-text').textContent = 'Dear Candidate, All the responses provided by you are saved in the system and the assessment has been submitted successfully.';
+        this.el('nqt-info-ok').textContent = 'OK';
+        this.el('nqt-info-ok').onclick = () => this.showDone();
+        this.el('nqt-info-close').onclick = () => this.showDone();
+        this.show('nqt-info');
+    },
+    showError() {
+        this.hide('nqt-saving');
+        this.el('nqt-info-text').textContent = 'Dear Candidate, your responses could not be sent to the server. Please check your internet connection and click on \'Retry\'. Do not close this window.';
+        this.el('nqt-info-ok').textContent = 'Retry';
+        this.el('nqt-info-ok').onclick = () => sendSubmission();
+        this.el('nqt-info-close').onclick = () => sendSubmission();
+        this.show('nqt-info');
+    },
+    showDone() {
+        this.hide('nqt-info');
+        this.hide('nqt-blank');
+        this.show('nqt-done');
+    },
+    exit() {
+        const url = 'assessment.php?set_no=' + encodeURIComponent(window.EXAM_CONFIG.setNo + '|' + window.EXAM_CONFIG.subjectId);
+        try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) {}
+        // The exam runs in its own window opened by instructions.php: show the attempts page
+        // in that original window and close this one, like "close this window" on TCS iON.
+        let usedOpener = false;
+        try {
+            if (window.opener && !window.opener.closed) {
+                window.opener.location.href = url;
+                usedOpener = true;
+            }
+        } catch (e) {}
+        if (usedOpener) {
+            window.close();
+            setTimeout(() => { window.location.href = url; }, 400);   // if the browser refuses to close it
+        } else {
+            window.location.href = url;
+        }
+    }
 };
 
 const performAutosave = (isFinal=false) => {
-    const payload = { currentQuestionIndex, timerSeconds, testState };
+    const payload = { currentQuestionIndex, timerSeconds, testState, timeSpentPerQuestion };
     try { localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(payload)); } catch (e) {}
     if (navigator.onLine) {
         fetch('save_progress.php', {
@@ -568,7 +659,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (document.getElementById('confirm-submit-btn')) {
         document.getElementById('confirm-submit-btn').onclick = () => {
             document.getElementById('submit-modal-overlay').classList.add('hidden');
-            handleTestSubmit(); 
+            SubmitFlow.showConfirm();
         };
     }
+    if (document.getElementById('nqt-confirm-ok')) document.getElementById('nqt-confirm-ok').onclick = () => handleTestSubmit();
+    if (document.getElementById('nqt-confirm-cancel')) document.getElementById('nqt-confirm-cancel').onclick = () => SubmitFlow.hideConfirm();
+    if (document.getElementById('nqt-exit-btn')) document.getElementById('nqt-exit-btn').onclick = () => SubmitFlow.exit();
 });

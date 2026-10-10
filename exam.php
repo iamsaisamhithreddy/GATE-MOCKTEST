@@ -17,8 +17,10 @@ if ($conn->connect_error) {
 
 require_once __DIR__ . '/modules/sections.php';
 require_once __DIR__ . '/modules/coding.php';
+require_once __DIR__ . '/modules/assessment.php';
 ensure_sections_schema($conn);
 ensure_coding_schema($conn);
+ensure_assessment_schema($conn);
 $coding_filter = coding_filter_sql($conn);   // hides coding questions unless the admin switched them on
 
 // Creating User session
@@ -151,6 +153,26 @@ if ($selected_set) {
     }
     $time_stmt->close();
 
+    // Attempt limit (set per test in tpdf.php; 0 = unlimited)
+    $limit_info = assessment_set_info($conn, $selected_set_int, (int)$selected_subject);
+    $max_attempts = $limit_info ? (int)$limit_info['max_attempts'] : 0;
+    if ($max_attempts > 0 && assessment_attempt_count($conn, (int)$user_id, $selected_set_int, (int)$selected_subject) >= $max_attempts) {
+        $conn->close();
+        $back = 'assessment.php?set_no=' . urlencode($selected_set_int . '|' . (int)$selected_subject);
+        ?>
+        <!DOCTYPE html>
+        <html lang="en"><head><meta charset="utf-8"><title>No Attempts Left</title></head>
+        <body style="font-family:Arial,sans-serif;background:#f5f6fa;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;">
+            <div style="background:#fff;padding:40px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.1);text-align:center;max-width:460px;">
+                <h2 style="margin-top:0;">No attempts left</h2>
+                <p>You have used all <?= $max_attempts ?> attempts of this assessment.</p>
+                <a href="<?= htmlspecialchars($back) ?>" style="display:inline-block;margin-top:10px;padding:10px 24px;background:#1b3c9c;color:#fff;border-radius:22px;text-decoration:none;">View My Attempts</a>
+            </div>
+        </body></html>
+        <?php
+        exit;
+    }
+
     // Grouped by section (in the admin's section order), passage questions kept together
     // at the end of their section, random order otherwise
     $sql = "SELECT q.id, q.q_type, q.q_text_url, q.options_json, q.correct_answer_json, q.explanation, q.marks, q.range_min, q.range_max,
@@ -241,6 +263,7 @@ if ($selected_set) {
     <link rel="stylesheet" href="modules/calculator.css">
     <link rel="stylesheet" href="modules/exam_popups.css?v=4">
     <link rel="stylesheet" href="modules/exam_coding.css?v=1">
+    <link rel="stylesheet" href="modules/exam_submit.css?v=1">
 
     <style>
         .watermark-container::before {
@@ -529,34 +552,30 @@ if ($selected_set) {
         <!-- /main-app -->
 
         <!-- ═══════════════════════════════════════════
-             RESULT SCREEN (shown after submit)
+             SUBMIT FLOW (TCS iON NQT style, modules/exam_submit.css + SubmitFlow in exam_app.js)
         ════════════════════════════════════════════ -->
-        <div id="result-screen" class="p-8 max-w-4xl mx-auto bg-white shadow-xl rounded-xl mt-10 hidden">
-            <div class="flex justify-between items-center mb-6 border-b-4 border-green-200 pb-4">
-                <h1 class="text-4xl font-extrabold text-green-700">Test Completed!</h1>
-                <button id="download-results-btn" class="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700">Download Results</button>
+        <div id="nqt-confirm" class="nqt-screen hidden">
+            <div class="nqt-topbar"><?= htmlspecialchars($subject_name . ' - ' . ($set_label ?? ('Set ' . $selected_set_int))) ?> Online Assessment</div>
+            <div class="nqt-rule"></div>
+            <div class="nqt-confirm-body">
+                <p>Dear Candidate, Thank you. Please note that, your Assessment is about to be submitted. Click on 'OK' to proceed further.</p>
+                <button type="button" id="nqt-confirm-ok" class="nqt-btn nqt-btn-ok">OK</button><button type="button" id="nqt-confirm-cancel" class="nqt-btn nqt-btn-cancel">Cancel</button>
             </div>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-                <div class="p-4 bg-blue-100 rounded-lg shadow-md">
-                    <p class="text-2xl font-bold text-blue-700" id="result-total">0</p>
-                    <p class="text-sm text-blue-600">Total Marks</p>
-                </div>
-                <div class="p-4 bg-green-100 rounded-lg shadow-md">
-                    <p class="text-2xl font-bold text-green-700" id="result-score">0</p>
-                    <p class="text-sm text-green-600">Marks Scored</p>
-                </div>
-                <div class="p-4 bg-yellow-100 rounded-lg shadow-md">
-                    <p class="text-2xl font-bold text-yellow-700" id="result-attempted">0</p>
-                    <p class="text-sm text-yellow-600">Attempted Qs</p>
-                </div>
-                <div class="p-4 bg-red-100 rounded-lg shadow-md">
-                    <p class="text-2xl font-bold text-red-700" id="result-unattempted">0</p>
-                    <p class="text-sm text-red-600">Unattempted Qs</p>
-                </div>
+        </div>
+        <div id="nqt-blank" class="nqt-screen hidden">
+            <div id="nqt-saving" class="nqt-saving hidden"><div class="nqt-spinner"></div>Submitting your responses, please wait...</div>
+        </div>
+        <div id="nqt-info" class="nqt-backdrop hidden">
+            <div class="nqt-info" role="dialog" aria-labelledby="nqt-info-text">
+                <div class="nqt-info-title"><span>Info</span><span id="nqt-info-close">Close &#10005;</span></div>
+                <div class="nqt-info-body"><div class="nqt-info-icon">i</div><div id="nqt-info-text"></div></div>
+                <div class="nqt-info-foot"><button type="button" id="nqt-info-ok" class="nqt-btn-green">OK</button></div>
             </div>
-            <div class="mt-8 p-4 bg-gray-50 rounded-lg text-center">
-                <h2 class="text-xl font-semibold text-gray-800 mb-2">Detailed Review</h2>
-                <div id="review-container" class="space-y-4 text-left"></div>
+        </div>
+        <div id="nqt-done" class="nqt-screen hidden">
+            <div class="nqt-done-box">
+                Dear Learner,<br>You have now successfully submitted the assessment. Click on "Exit Assessment" to close this window.
+                <div><button type="button" id="nqt-exit-btn" class="nqt-btn nqt-btn-ok">Exit Assessment</button></div>
             </div>
         </div>
 
@@ -672,7 +691,7 @@ if ($selected_set) {
     <script src="modules/coderun/runner.js?v=1"></script>
     <script src="modules/exam_coding.js?v=2"></script>
     <?php endif; ?>
-    <script src="modules/exam_app.js?v=8"></script>
+    <script src="modules/exam_app.js?v=9"></script>
     <script src="modules/exam_popups.js?v=4"></script>
 
 </body>

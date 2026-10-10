@@ -1,0 +1,30 @@
+/* Submit flow screens (TCS iON NQT style), driven by SubmitFlow in exam_app.js */
+.nqt-screen { position: fixed; inset: 0; z-index: 9000; background: #fff; font-family: Arial, Helvetica, sans-serif; color: #222; }
+.nqt-screen.hidden, .nqt-backdrop.hidden { display: none; }
+.nqt-topbar { background: #1f2a30; color: #f5b041; font-size: 18px; padding: 12px 20px; }
+.nqt-rule { border-top: 1px solid #888; margin: 140px 0 0; }
+.nqt-confirm-body { text-align: center; margin-top: 30vh; padding: 0 20px; }
+.nqt-confirm-body p { font-size: 18px; margin: 0 0 16px; }
+.nqt-btn { font: 18px Arial, Helvetica, sans-serif; padding: 10px 28px; cursor: pointer; border-radius: 0; }
+.nqt-btn-ok { background: #0b4f5c; color: #fff; border: 1px solid #0b4f5c; min-width: 90px; }
+.nqt-btn-ok:hover { background: #083c46; }
+.nqt-btn-cancel { background: #fff; color: #222; border: 1px solid #888; margin-left: 22px; }
+.nqt-btn-cancel:hover { background: #f2f2f2; }
+
+.nqt-backdrop { position: fixed; inset: 0; z-index: 9100; background: rgba(0,0,0,.72); display: flex; align-items: center; justify-content: center; }
+.nqt-info { width: 560px; max-width: 94vw; background: #f4f4f4; border-radius: 4px; box-shadow: 0 6px 24px rgba(0,0,0,.5); overflow: hidden; font-family: Arial, Helvetica, sans-serif; }
+.nqt-info-title { background: linear-gradient(#2f59d6, #1f43b5); color: #fff; font-weight: bold; font-size: 18px; padding: 9px 12px; display: flex; justify-content: space-between; }
+.nqt-info-title span:last-child { cursor: pointer; font-weight: bold; }
+.nqt-info-body { display: flex; gap: 16px; padding: 14px 16px 18px; font-size: 16px; line-height: 1.45; border-bottom: 1px solid #ddd; }
+.nqt-info-icon { flex: 0 0 38px; width: 38px; height: 38px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #5fd3c6, #0e8f86); color: #fff;
+                 font: bold italic 22px Georgia, serif; display: flex; align-items: center; justify-content: center; box-shadow: inset 0 0 0 2px #0b6f68; }
+.nqt-info-foot { text-align: center; padding: 12px; }
+.nqt-btn-green { background: #1e8c2f; color: #fff; border: 1px solid #16701f; border-radius: 3px; font-size: 16px; padding: 6px 24px; cursor: pointer; }
+.nqt-btn-green:hover { background: #17741f; }
+
+.nqt-saving { text-align: center; margin-top: 38vh; font-size: 17px; color: #444; }
+.nqt-spinner { width: 34px; height: 34px; border: 4px solid #ddd; border-top-color: #0b4f5c; border-radius: 50%; margin: 0 auto 14px; animation: nqt-spin 1s linear infinite; }
+@keyframes nqt-spin { to { transform: rotate(360deg); } }
+
+.nqt-done-box { max-width: 900px; margin: 22vh auto 0; background: #f2f2f2; padding: 70px 30px 40px; text-align: center; font-size: 19px; line-height: 1.45; }
+.nqt-done-box .nqt-btn-ok { margin-top: 90px; font-size: 17px; padding: 12px 34px; }
