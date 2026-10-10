@@ -1,6 +1,8 @@
 <?php
 include 'config.php';
 require_once __DIR__ . '/dompdf/autoload.inc.php';
+require_once __DIR__ . '/modules/assessment.php';
+ensure_assessment_schema($conn);   // set_time.pass_marks and set_time.max_attempts
 use Dompdf\Dompdf;
 use Dompdf\Options;
 
@@ -46,6 +48,14 @@ if ($action === 'update_set_details' && $subject_id > 0) {
             $stmt2->bind_param("sssii", $st, $et, $at, $subject_id, $set_no);
             $stmt2->execute();
             $stmt2->close();
+
+            // Passing marks (empty = not set) and attempt limit (0 = unlimited) for the assessment page
+            $pm = (isset($data['pass_marks']) && $data['pass_marks'] !== '') ? (float)$data['pass_marks'] : null;
+            $ma = max(0, (int)($data['max_attempts'] ?? 0));
+            $stmt3 = $conn->prepare("UPDATE set_time SET pass_marks=?, max_attempts=? WHERE subject_id=? AND set_no=?");
+            $stmt3->bind_param("diii", $pm, $ma, $subject_id, $set_no);
+            $stmt3->execute();
+            $stmt3->close();
         }
         header("Location: " . $_SERVER['PHP_SELF'] . "?msg=success&sub=" . $subject_id);
         exit;
@@ -54,7 +64,7 @@ if ($action === 'update_set_details' && $subject_id > 0) {
 
 // 3. Load sets for current selection
 if ($subject_id > 0) {
-    $sql = "SELECT s.set_no, s.duration_minutes, s.start_time, s.end_time, s.attempt_till, sd.topic_name
+    $sql = "SELECT s.set_no, s.duration_minutes, s.start_time, s.end_time, s.attempt_till, s.pass_marks, s.max_attempts, sd.topic_name
             FROM set_time s 
             LEFT JOIN set_definitions sd ON s.subject_id = sd.subject_id AND s.set_no = sd.set_no
             WHERE s.subject_id = {$subject_id} 
@@ -248,6 +258,8 @@ if ($action === 'download_pdf' || $action === 'download_all_pdf') {
                         <th width="20%">End Time</th>
                         <th width="20%">Deadline</th>
                         <th width="10%">Dur.</th>
+                        <th width="8%" title="Marks needed to pass. Leave empty if there is no pass mark.">Pass Marks</th>
+                        <th width="8%" title="How many times a candidate may take this test. 0 = unlimited.">Max Attempts</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -272,6 +284,14 @@ if ($action === 'download_pdf' || $action === 'download_all_pdf') {
                                    value="<?= $s['attempt_till'] ? date('Y-m-d\TH:i', strtotime($s['attempt_till'])) : '' ?>" class="inline-dt">
                         </td>
                         <td><span class="status-pill"><?= $s['duration_minutes'] ?>m</span></td>
+                        <td>
+                            <input type="number" step="0.01" min="0" name="sets_data[<?= $s['set_no'] ?>][pass_marks]"
+                                   value="<?= $s['pass_marks'] !== null ? htmlspecialchars(rtrim(rtrim($s['pass_marks'], '0'), '.')) : '' ?>" placeholder="--" class="inline-dt">
+                        </td>
+                        <td>
+                            <input type="number" step="1" min="0" name="sets_data[<?= $s['set_no'] ?>][max_attempts]"
+                                   value="<?= (int)$s['max_attempts'] ?>" class="inline-dt">
+                        </td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>

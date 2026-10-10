@@ -451,6 +451,8 @@ $attempts_result = $conn->query($attempts_query);
                     <td class="p-4 text-[11px] text-gray-400 text-center"><?= $row['start_time'] ?></td>
                     <td class="p-4 text-center flex justify-center items-center gap-3">
                         <a href="<?= $url ?>" class="text-blue-600 hover:underline text-xs font-bold">🔄 Reattempt</a>
+                        <a href="report.php?attempt_id=<?= (int)$row['attempt_id'] ?>" target="_blank" class="text-indigo-600 hover:underline text-xs font-bold">📄 Report</a>
+                        <a href="response_sheet.php?attempt_id=<?= (int)$row['attempt_id'] ?>&pdf=1" class="text-rose-600 hover:underline text-xs font-bold">🧾 Response PDF</a>
                         <form method="POST" style="display:inline;">
                             <input type="hidden" name="attempt_id" value="<?= $row['attempt_id'] ?>">
                             <button type="submit" name="export_responses" class="text-emerald-600 hover:underline text-xs font-bold">📥 Download</button>
